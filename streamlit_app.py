@@ -80,7 +80,7 @@ if not has_video or not has_audio:
     st.stop()
 
 # -----------------------------
-# Download Helper with Better Headers
+# Download Helper with Fixed Headers (No Extra Spaces!)
 # -----------------------------
 def download_file(url: str, dest_path: str, desc: str) -> bool:
     try:
@@ -165,9 +165,7 @@ if st.button("🎬 Merge Audio & Video"):
             status_text.text("📥 Downloading video stream...")
             prog_video = st.empty()
             if not download_file(video_url, video_temp, "video"):
-                error_msg = st.session_state['error_video']
-                st.session_state['error_video_full'] = error_msg
-                raise Exception(f"Download failed for video")
+                raise Exception("Download failed for video")
 
         # --- Handle Audio ---
         if audio_file:
@@ -181,9 +179,7 @@ if st.button("🎬 Merge Audio & Video"):
             status_text.text("📥 Downloading audio stream...")
             prog_audio = st.empty()
             if not download_file(audio_url, audio_temp, "audio"):
-                error_msg = st.session_state['error_audio']
-                st.session_state['error_audio_full'] = error_msg
-                raise Exception(f"Download failed for audio")
+                raise Exception("Download failed for audio")
 
         # Show progress bars
         if video_url:
@@ -221,12 +217,16 @@ if st.button("🎬 Merge Audio & Video"):
 
     except Exception as e:
         error_msg = str(e)
-        st.error(f"❌ Operation failed: {error_msg}")
-        logger.error(f"Merge failed: {error_msg}")
+        logger.error(f"Operation failed: {error_msg}")
 
-        # Special handling for 403
+        # Clear progress
+        progress_bar = st.progress(0)
+        status_text.error("🔴 Operation failed")
+
+        # Specific message for YouTube block
         if "403" in error_msg or "Forbidden" in error_msg:
-            st.warning("🔴 YouTube is blocking access to this stream from this server.")
+            st.error("❌ Download failed: YouTube is blocking this server from downloading the video.")
+            st.warning("But you can still download it yourself!")
 
             st.markdown("### 🔗 Use These Links in Your Browser")
             st.markdown("""
@@ -239,11 +239,19 @@ if st.button("🎬 Merge Audio & Video"):
                 st.markdown(f"🔊 [Download Audio Stream]({audio_url})")
 
             st.markdown("""
-            Then use:
+            💡 **How to merge locally:**
+            1. Click the links above to download both files
+            2. Install [FFmpeg](https://ffmpeg.org/) (free)
+            3. Run this command in Terminal/Command Prompt:
             ```bash
             ffmpeg -i video.webm -i audio.webm -c copy output.webm
             ```
             """)
+        else:
+            # Generic error
+            st.error(f"❌ Operation failed: {error_msg}")
+            if video_url or audio_url:
+                st.info("Try downloading the files manually using the direct links and merging with FFmpeg.")
 
     finally:
         # --- Cleanup ---
