@@ -51,16 +51,15 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("🎥 Video Source")
-    video_option = st.radio("Choose video input:", ["Upload File", "Direct URL"])
+    video_option = st.radio("Choose video input:", ["Upload File", "Direct URL"], key="video_input")
     video_file = st.file_uploader("Upload video", type=["mp4", "webm", "mkv"], key="v1")
     video_url = st.text_input("Or enter video URL") if video_option == "Direct URL" else None
 
 with col2:
     st.subheader("🔊 Audio Source")
-    audio_option = st.radio("Choose audio input:", ["Upload File", "Direct URL"])
+    audio_option = st.radio("Choose audio input:", ["Upload File", "Direct URL"], key="audio_input")
     audio_file = st.file_uploader("Upload audio", type=["m4a", "wav", "mp3", "webm", "aac"], key="a1")
     audio_url = st.text_input("Or enter audio URL") if audio_option == "Direct URL" else None
-
 
 # -----------------------------
 # Validate Inputs
@@ -81,13 +80,17 @@ if not has_video or not has_audio:
     st.stop()
 
 # -----------------------------
-# Download Helper
+# Download Helper with Better Headers
 # -----------------------------
 def download_file(url: str, dest_path: str, desc: str) -> bool:
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Accept": "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.8,*/*;q=0.7",
+            "Accept-Encoding": "identity",
             "Referer": "https://www.youtube.com/",
+            "Origin": "https://www.youtube.com",
+            "Connection": "keep-alive",
         }
         with requests.get(url, stream=True, headers=headers, timeout=120) as r:
             r.raise_for_status()
@@ -107,7 +110,7 @@ def download_file(url: str, dest_path: str, desc: str) -> bool:
         return False
 
 # -----------------------------
-# Merge Function
+# Merge Function with Timeout
 # -----------------------------
 def merge_streams(video_path: str, audio_path: str, output_path: str) -> tuple[bool, str]:
     try:
@@ -125,6 +128,8 @@ def merge_streams(video_path: str, audio_path: str, output_path: str) -> tuple[b
         if result.returncode != 0:
             return False, result.stderr.decode('utf-8', errors='ignore')
         return True, "Success"
+    except subprocess.TimeoutExpired:
+        return False, "FFmpeg timeout after 5 minutes"
     except Exception as e:
         return False, str(e)
 
@@ -147,7 +152,6 @@ if st.button("🎬 Merge Audio & Video"):
 
         progress_bar = st.progress(0)
         status_text = st.empty()
-        status_text.text("📥 Downloading or loading files...")
 
         # --- Handle Video ---
         if video_file:
@@ -155,10 +159,15 @@ if st.button("🎬 Merge Audio & Video"):
             with open(video_temp, "wb") as f:
                 f.write(video_file.read())
             st.session_state['progress_video'] = 100
+            status_text.text("✅ Video uploaded")
         else:
             video_temp = os.path.join(temp_dir, "input_video.webm")
+            status_text.text("📥 Downloading video stream...")
+            prog_video = st.empty()
             if not download_file(video_url, video_temp, "video"):
-                raise Exception(f"Download failed for video: {st.session_state['error_video']}")
+                error_msg = st.session_state['error_video']
+                st.session_state['error_video_full'] = error_msg
+                raise Exception(f"Download failed for video")
 
         # --- Handle Audio ---
         if audio_file:
@@ -166,14 +175,25 @@ if st.button("🎬 Merge Audio & Video"):
             with open(audio_temp, "wb") as f:
                 f.write(audio_file.read())
             st.session_state['progress_audio'] = 100
+            status_text.text("✅ Audio uploaded")
         else:
             audio_temp = os.path.join(temp_dir, "input_audio.webm")
+            status_text.text("📥 Downloading audio stream...")
+            prog_audio = st.empty()
             if not download_file(audio_url, audio_temp, "audio"):
-                raise Exception(f"Download failed for audio: {st.session_state['error_audio']}")
+                error_msg = st.session_state['error_audio']
+                st.session_state['error_audio_full'] = error_msg
+                raise Exception(f"Download failed for audio")
+
+        # Show progress bars
+        if video_url:
+            prog_video.progress(st.session_state['progress_video'] / 100)
+        if audio_url:
+            prog_audio.progress(st.session_state['progress_audio'] / 100)
 
         # --- Merge ---
-        status_text.text("🔄 Merging streams...")
-        progress_bar.progress(0.5)
+        status_text.text("🔄 Merging streams with FFmpeg...")
+        progress_bar.progress(0.7)
 
         output_file = os.path.join(temp_dir, "merged_output.webm")
         success, msg = merge_streams(video_temp, audio_temp, output_file)
@@ -183,7 +203,7 @@ if st.button("🎬 Merge Audio & Video"):
 
         # --- Success ---
         progress_bar.progress(1.0)
-        status_text.text("✅ Merge complete!")
+        status_text.success("✅ Merge complete!")
 
         # Read merged file for download
         with open(output_file, "rb") as f:
@@ -200,16 +220,36 @@ if st.button("🎬 Merge Audio & Video"):
         )
 
     except Exception as e:
-        st.error(f"❌ Operation failed: {str(e)}")
-        logger.error(f"Merge failed: {e}")
+        error_msg = str(e)
+        st.error(f"❌ Operation failed: {error_msg}")
+        logger.error(f"Merge failed: {error_msg}")
+
+        # Special handling for 403
+        if "403" in error_msg or "Forbidden" in error_msg:
+            st.warning("🔴 YouTube is blocking access to this stream from this server.")
+
+            st.markdown("### 🔗 Use These Links in Your Browser")
+            st.markdown("""
+            Server IPs are often blocked by YouTube.  
+            But **your personal browser can usually download these**:
+            """)
+            if video_url:
+                st.markdown(f"🎥 [Download Video Stream]({video_url})")
+            if audio_url:
+                st.markdown(f"🔊 [Download Audio Stream]({audio_url})")
+
+            st.markdown("""
+            Then use:
+            ```bash
+            ffmpeg -i video.webm -i audio.webm -c copy output.webm
+            ```
+            """)
+
     finally:
         # --- Cleanup ---
-        status_text.text("🧹 Cleaning up temporary files...")
         if os.path.exists(temp_dir):
             try:
                 shutil.rmtree(temp_dir)
-                logger.info("Temporary files deleted.")
+                logger.info("🧹 Temporary files deleted.")
             except Exception as e:
                 logger.error(f"Cleanup failed: {e}")
-        if not success:
-            progress_bar.empty()
