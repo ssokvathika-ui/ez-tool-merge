@@ -1,2 +1,4 @@
 streamlit
 requests
+yt-dlp
+beautifulsoup4
